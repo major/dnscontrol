@@ -30,8 +30,6 @@ type DomainConfig struct {
 	EnsureAbsent Records `json:"recordsabsent,omitempty"` // ENSURE_ABSENT
 	KeepUnknown  bool    `json:"keepunknown,omitempty"`   // NO_PURGE
 
-	IgnoredNames    []*IgnoreName      `json:"ignored_names,omitempty"`
-	IgnoredTargets  []*IgnoreTarget    `json:"ignored_targets,omitempty"`
 	Unmanaged       []*UnmanagedConfig `json:"unmanaged,omitempty"`                      // IGNORE()
 	UnmanagedUnsafe bool               `json:"unmanaged_disable_safety_check,omitempty"` // DISABLE_IGNORE_SAFETY_CHECK
 
@@ -135,7 +133,7 @@ func (dc *DomainConfig) Punycode() error {
 			rec.SetTarget(t)
 		case "CF_REDIRECT", "CF_TEMP_REDIRECT", "CF_WORKER_ROUTE":
 			rec.SetTarget(rec.GetTargetField())
-		case "A", "AAAA", "CAA", "DHCPID", "DS", "LOC", "NAPTR", "SOA", "SSHFP", "TXT", "TLSA", "AZURE_ALIAS":
+		case "A", "AAAA", "CAA", "DHCID", "DS", "LOC", "NAPTR", "SOA", "SSHFP", "TXT", "TLSA", "AZURE_ALIAS":
 			// Nothing to do.
 		default:
 			return fmt.Errorf("Punycode rtype %v unimplemented", rec.Type)

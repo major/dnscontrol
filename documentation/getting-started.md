@@ -54,6 +54,23 @@ git clone https://github.com/StackExchange/dnscontrol
 
 If these don't work, more info is in [#805](https://github.com/StackExchange/dnscontrol/issues/805).
 
+## 1.1. Shell Completion
+
+Shell completion is available for `zsh` and `bash`.
+
+### zsh
+
+Add `eval "$(dnscontrol shell-completion zsh)"` to your `~/.zshrc` file.
+
+This requires completion to be enabled in zsh. A good tutorial for this is available at
+[The Valuable Dev](https://thevaluable.dev/zsh-completion-guide-examples/) <sup>[[archived](https://web.archive.org/web/20231015083946/https://thevaluable.dev/zsh-completion-guide-examples/)]</sup>.
+
+### bash
+
+Add `eval "$(dnscontrol shell-completion bash)"` to your `~/.bashrc` file.
+
+This requires the `bash-completion` package to be installed. See [scop/bash-completion](https://github.com/scop/bash-completion/) for instructions.
+
 ## 2. Create a place for the config files
 
 Create a directory where you'll store your configuration files.
@@ -72,7 +89,7 @@ use BIND for DNS service, it is useful for testing.
 domains, and so on.
 
 Start your `dnsconfig.js` file by downloading
-[dnsconfig.js](https://github.com/StackExchange/dnscontrol/blob/master/documentation/assets/getting-started/dnsconfig.js)
+[dnsconfig.js](https://github.com/StackExchange/dnscontrol/blob/main/documentation/assets/getting-started/dnsconfig.js)
 and renaming it.
 
 The file looks like:
@@ -138,7 +155,7 @@ It is only needed if any providers require credentials (API keys,
 usernames, passwords, etc.).
 
 Start your `creds.json` file by downloading
-[creds.json](https://github.com/StackExchange/dnscontrol/blob/master/documentation/assets/getting-started/creds.json)
+[creds.json](https://github.com/StackExchange/dnscontrol/blob/main/documentation/assets/getting-started/creds.json)
 and renaming it.
 
 The file looks like:

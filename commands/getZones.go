@@ -286,8 +286,12 @@ func GetZone(args GetZoneArgs) error {
 					}
 				}
 
+				ty := rec.Type
+				if rec.Type == "UNKNOWN" {
+					ty = rec.UnknownTypeName
+				}
 				fmt.Fprintf(w, "%s\t%s\t%d\tIN\t%s\t%s%s\n",
-					rec.NameFQDN, rec.Name, rec.TTL, rec.Type, rec.GetTargetCombined(), cfproxy)
+					rec.NameFQDN, rec.Name, rec.TTL, ty, rec.GetTargetCombinedFunc(nil), cfproxy)
 			}
 
 		default:
@@ -351,11 +355,7 @@ func formatDsl(zonename string, rec *models.RecordConfig, defaultTTL uint32) str
 	case "TLSA":
 		target = fmt.Sprintf(`%d, %d, %d, "%s"`, rec.TlsaUsage, rec.TlsaSelector, rec.TlsaMatchingType, rec.GetTargetField())
 	case "TXT":
-		if len(rec.TxtStrings) == 1 {
-			target = `"` + rec.TxtStrings[0] + `"`
-		} else {
-			target = `["` + strings.Join(rec.TxtStrings, `", "`) + `"]`
-		}
+		target = jsonQuoted(rec.GetTargetTXTJoined())
 		// TODO(tlim): If this is an SPF record, generate a SPF_BUILDER().
 	case "NS":
 		// NS records at the apex should be NAMESERVER() records.
@@ -367,6 +367,8 @@ func formatDsl(zonename string, rec *models.RecordConfig, defaultTTL uint32) str
 		target = `"` + target + `"`
 	case "R53_ALIAS":
 		return makeR53alias(rec, ttl)
+	case "UNKNOWN":
+		return makeUknown(rec, ttl)
 	default:
 		target = `"` + target + `"`
 	}
@@ -395,8 +397,15 @@ func makeR53alias(rec *models.RecordConfig, ttl uint32) string {
 	if z, ok := rec.R53Alias["zone_id"]; ok {
 		items = append(items, `R53_ZONE("`+z+`")`)
 	}
+	if e, ok := rec.R53Alias["evaluate_target_health"]; ok && e == "true" {
+		items = append(items, "R53_EVALUATE_TARGET_HEALTH(true)")
+	}
 	if ttl != 0 {
 		items = append(items, fmt.Sprintf("TTL(%d)", ttl))
 	}
 	return rec.Type + "(" + strings.Join(items, ", ") + ")"
+}
+
+func makeUknown(rc *models.RecordConfig, ttl uint32) string {
+	return fmt.Sprintf(`// %s("%s")`, rc.UnknownTypeName, rc.GetTargetField())
 }

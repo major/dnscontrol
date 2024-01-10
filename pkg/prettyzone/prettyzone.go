@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/StackExchange/dnscontrol/v4/models"
+	"github.com/StackExchange/dnscontrol/v4/pkg/txtutil"
 	"github.com/miekg/dns"
 )
 
@@ -136,9 +137,12 @@ func (z *ZoneGenData) generateZoneFileHelper(w io.Writer) error {
 
 		// type
 		typeStr := rr.Type
+		if rr.Type == "UNKNOWN" {
+			typeStr = rr.UnknownTypeName
+		}
 
 		// the remaining line
-		target := rr.GetTargetCombined()
+		target := rr.GetTargetCombinedFunc(txtutil.EncodeQuoted)
 
 		// comment
 		comment := ""

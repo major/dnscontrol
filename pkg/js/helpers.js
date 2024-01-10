@@ -328,8 +328,14 @@ var R53_ALIAS = recordBuilder('R53_ALIAS', {
         record.target = args.target;
         if (_.isObject(record.r53_alias)) {
             record.r53_alias['type'] = args.type;
+            if (!_.isString(record.r53_alias['evaluate_target_health'])) {
+                record.r53_alias['evaluate_target_health'] = 'false';
+            }
         } else {
-            record.r53_alias = { type: args.type };
+            record.r53_alias = {
+                type: args.type,
+                evaluate_target_health: 'false',
+            };
         }
     },
 });
@@ -343,6 +349,17 @@ function R53_ZONE(zone_id) {
             r.r53_alias['zone_id'] = zone_id;
         } else {
             r.r53_alias = { zone_id: zone_id };
+        }
+    };
+}
+
+// R53_EVALUATE_TARGET_HEALTH(enabled)
+function R53_EVALUATE_TARGET_HEALTH(enabled) {
+    return function (r) {
+        if (_.isObject(r.r53_alias)) {
+            r.r53_alias['evaluate_target_health'] = enabled.toString();
+        } else {
+            r.r53_alias = { evaluate_target_health: enabled.toString() };
         }
     };
 }
@@ -526,11 +543,9 @@ var TXT = recordBuilder('TXT', {
         record.name = args.name;
         // Store the strings from the user verbatim.
         if (_.isString(args.target)) {
-            record.txtstrings = [args.target];
-            record.target = args.target; // Overwritten by the Go code
+            record.target = args.target;
         } else {
-            record.txtstrings = args.target;
-            record.target = args.target.join(''); // Overwritten by the Go code
+            record.target = args.target.join('');
         }
     },
 });
@@ -831,16 +846,6 @@ function DISABLE_IGNORE_SAFETY_CHECK(d) {
     d.unmanaged_disable_safety_check = true;
 }
 
-var IGNORE_NAME_DISABLE_SAFETY_CHECK = {
-    ignore_name_disable_safety_check: 'true',
-    // (NOTE: diff1 only.)
-    // This disables a safety check intended to prevent:
-    // 1. Two owners toggling a record between two settings.
-    // 2. The other owner wiping all records at this label, which won't
-    // be noticed until the next time dnscontrol is run.
-    // See https://github.com/StackExchange/dnscontrol/issues/1106
-};
-
 // IGNORE(labelPattern, rtypePattern, targetPattern)
 function IGNORE(labelPattern, rtypePattern, targetPattern) {
     if (labelPattern === undefined) {
@@ -853,9 +858,6 @@ function IGNORE(labelPattern, rtypePattern, targetPattern) {
         targetPattern = '*';
     }
     return function (d) {
-        // diff1
-        d.ignored_names.push({ pattern: labelPattern, types: rtypePattern });
-        // diff2
         d.unmanaged.push({
             label_pattern: labelPattern,
             rType_pattern: rtypePattern,
@@ -866,30 +868,11 @@ function IGNORE(labelPattern, rtypePattern, targetPattern) {
 
 // IGNORE_NAME(name, rTypes)
 function IGNORE_NAME(name, rTypes) {
-    if (rTypes === undefined) {
-        rTypes = '*';
-    }
-    return function (d) {
-        // diff1
-        d.ignored_names.push({ pattern: name, types: rTypes });
-        // diff2
-        d.unmanaged.push({
-            label_pattern: name,
-            rType_pattern: rTypes,
-        });
-    };
+  return IGNORE(name, rTypes)
 }
 
 function IGNORE_TARGET(target, rType) {
-    return function (d) {
-        // diff1
-        d.ignored_targets.push({ pattern: target, type: rType });
-        // diff2
-        d.unmanaged.push({
-            rType_pattern: rType,
-            target_pattern: target,
-        });
-    };
+  return IGNORE("*", rType, target)
 }
 
 // IMPORT_TRANSFORM(translation_table, domain)
@@ -1495,13 +1478,23 @@ function CAA_BUILDER(value) {
         }
     }
 
-    if (value.issue)
+    if (value.issue) {
+        var flag = function() {};
+        if (value.issue_critical) {
+          flag = CAA_CRITICAL;
+        }
         for (var i = 0, len = value.issue.length; i < len; i++)
-            r.push(CAA(value.label, 'issue', value.issue[i]));
+            r.push(CAA(value.label, 'issue', value.issue[i], flag));
+    }
 
-    if (value.issuewild)
+    if (value.issuewild) {
+        var flag = function() {};
+        if (value.issuewild_critical) {
+          flag = CAA_CRITICAL;
+        }
         for (var i = 0, len = value.issuewild.length; i < len; i++)
-            r.push(CAA(value.label, 'issuewild', value.issuewild[i]));
+            r.push(CAA(value.label, 'issuewild', value.issuewild[i], flag));
+    }
 
     return r;
 }
@@ -1700,7 +1693,7 @@ function M365_BUILDER(name, value) {
         );
     }
 
-    r = [];
+    var r = [];
 
     // MX (default: true)
     if (value.mx) {

@@ -9,34 +9,10 @@ import (
 	"github.com/miekg/dns"
 )
 
-//// Header Header returns the header of an resource record.
-//func (rc *RecordConfig) Header() *dns.RR_Header {
-//	log.Fatal("Header not implemented")
-//	return nil
-//}
-
 // String returns the text representation of the resource record.
 func (rc *RecordConfig) String() string {
 	return rc.GetTargetCombined()
 }
-
-//// copy returns a copy of the RR
-//func (rc *RecordConfig) copy() dns.RR {
-//	log.Fatal("Copy not implemented")
-//	return dns.TypeToRR[dns.TypeA]()
-//}
-//
-//// len returns the length (in octets) of the uncompressed RR in wire format.
-//func (rc *RecordConfig) len() int {
-//	log.Fatal("len not implemented")
-//	return 0
-//}
-//
-//// pack packs an RR into wire format.
-//func (rc *RecordConfig) pack([]byte, int, map[string]int, bool) (int, error) {
-//	log.Fatal("pack not implemented")
-//	return 0, nil
-//}
 
 // Conversions
 
@@ -56,6 +32,16 @@ func RRstoRCs(rrs []dns.RR, origin string) (Records, error) {
 
 // RRtoRC converts dns.RR to RecordConfig
 func RRtoRC(rr dns.RR, origin string) (RecordConfig, error) {
+	return helperRRtoRC(rr, origin, false)
+}
+
+// RRtoRCTxtBug converts dns.RR to RecordConfig. Compensates for the backslash bug in github.com/miekg/dns/issues/1384.
+func RRtoRCTxtBug(rr dns.RR, origin string) (RecordConfig, error) {
+	return helperRRtoRC(rr, origin, true)
+}
+
+// helperRRtoRC converts dns.RR to RecordConfig. If fixBug is true, replaces `\\` to `\` in TXT records to compensate for github.com/miekg/dns/issues/1384.
+func helperRRtoRC(rr dns.RR, origin string, fixBug bool) (RecordConfig, error) {
 	// Convert's dns.RR into our native data type (RecordConfig).
 	// Records are translated directly with no changes.
 	header := rr.Header()
@@ -97,7 +83,15 @@ func RRtoRC(rr dns.RR, origin string) (RecordConfig, error) {
 	case *dns.TLSA:
 		err = rc.SetTargetTLSA(v.Usage, v.Selector, v.MatchingType, v.Certificate)
 	case *dns.TXT:
-		err = rc.SetTargetTXTs(v.Txt)
+		if fixBug {
+			t := strings.Join(v.Txt, "")
+			te := t
+			te = strings.ReplaceAll(te, `\\`, `\`)
+			te = strings.ReplaceAll(te, `\"`, `"`)
+			err = rc.SetTargetTXT(te)
+		} else {
+			err = rc.SetTargetTXTs(v.Txt)
+		}
 	default:
 		return *rc, fmt.Errorf("rrToRecord: Unimplemented zone record type=%s (%v)", rc.Type, rr)
 	}

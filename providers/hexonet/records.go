@@ -3,13 +3,11 @@ package hexonet
 import (
 	"bytes"
 	"fmt"
-	"regexp"
 	"strconv"
 	"strings"
 
 	"github.com/StackExchange/dnscontrol/v4/models"
 	"github.com/StackExchange/dnscontrol/v4/pkg/diff"
-	"github.com/StackExchange/dnscontrol/v4/pkg/diff2"
 	"github.com/StackExchange/dnscontrol/v4/pkg/txtutil"
 )
 
@@ -59,27 +57,12 @@ func (n *HXClient) GetZoneRecords(domain string, meta map[string]string) (models
 
 // GetZoneRecordsCorrections returns a list of corrections that will turn existing records into dc.Records.
 func (n *HXClient) GetZoneRecordsCorrections(dc *models.DomainConfig, actual models.Records) ([]*models.Correction, error) {
-
-	//	actual, err := n.GetZoneRecords(dc.Name)
-	//	if err != nil {
-	//		return nil, err
-	//	}
-
-	//checkNSModifications(dc)
-
-	txtutil.SplitSingleLongTxt(dc.Records)
-
-	var corrections []*models.Correction
-	var differ diff.Differ
-	if !diff2.EnableDiff2 {
-		differ = diff.New(dc)
-	} else {
-		differ = diff.NewCompat(dc)
-	}
-	_, create, del, mod, err := differ.IncrementalDiff(actual)
+	toReport, create, del, mod, err := diff.NewCompat(dc).IncrementalDiff(actual)
 	if err != nil {
 		return nil, err
 	}
+	// Start corrections with the reports
+	corrections := diff.GenerateMessageCorrections(toReport)
 
 	buf := &bytes.Buffer{}
 	// Print a list of changes. Generate an actual change that is the zone
@@ -143,10 +126,6 @@ func toRecord(r *HXRecord, origin string) *models.RecordConfig {
 	rc.SetLabelFromFQDN(fqdn, origin)
 
 	switch rtype := r.Type; rtype {
-	case "TXT":
-		if err := rc.SetTargetTXTs(decodeTxt(r.Answer)); err != nil {
-			panic(fmt.Errorf("unparsable TXT record received from hexonet api: %w", err))
-		}
 	case "MX":
 		if err := rc.SetTargetMX(uint16(r.Priority), r.Answer); err != nil {
 			panic(fmt.Errorf("unparsable MX record received from hexonet api: %w", err))
@@ -156,7 +135,7 @@ func toRecord(r *HXRecord, origin string) *models.RecordConfig {
 			panic(fmt.Errorf("unparsable SRV record received from hexonet api: %w", err))
 		}
 	default: // "A", "AAAA", "ANAME", "CNAME", "NS"
-		if err := rc.PopulateFromString(rtype, r.Answer, r.Fqdn); err != nil {
+		if err := rc.PopulateFromStringFunc(rtype, r.Answer, r.Fqdn, txtutil.ParseQuoted); err != nil {
 			panic(fmt.Errorf("unparsable record received from hexonet api: %w", err))
 		}
 	}
@@ -256,7 +235,7 @@ func (n *HXClient) createRecordString(rc *models.RecordConfig, domain string) (s
 	case "CAA":
 		record.Answer = fmt.Sprintf(`%v %s "%s"`, rc.CaaFlag, rc.CaaTag, record.Answer)
 	case "TXT":
-		record.Answer = encodeTxt(rc.TxtStrings)
+		record.Answer = txtutil.EncodeQuoted(rc.GetTargetTXTJoined())
 	case "SRV":
 		if rc.GetTargetField() == "." {
 			return "", fmt.Errorf("SRV records with empty targets are not supported (as of 2020-02-27, the API returns 'Invalid attribute value syntax')")
@@ -279,32 +258,4 @@ func (n *HXClient) createRecordString(rc *models.RecordConfig, domain string) (s
 
 func (n *HXClient) deleteRecordString(record *HXRecord, domain string) string {
 	return record.Raw
-}
-
-// encodeTxt encodes TxtStrings for sending in the CREATE/MODIFY API:
-func encodeTxt(txts []string) string {
-	var r []string
-	for _, txt := range txts {
-		n := `"` + strings.Replace(txt, `"`, `\"`, -1) + `"`
-		r = append(r, n)
-	}
-	return strings.Join(r, " ")
-}
-
-// finds a string surrounded by quotes that might contain an escaped quote character.
-var quotedStringRegexp = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`)
-
-// decodeTxt decodes the TXT record as received from hexonet api and
-// returns the list of strings.
-func decodeTxt(s string) []string {
-
-	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
-		txtStrings := []string{}
-		for _, t := range quotedStringRegexp.FindAllStringSubmatch(s, -1) {
-			txtString := strings.Replace(t[1], `\"`, `"`, -1)
-			txtStrings = append(txtStrings, txtString)
-		}
-		return txtStrings
-	}
-	return []string{s}
 }

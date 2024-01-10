@@ -37,17 +37,17 @@ coworkers who aren't DNS experts.
 
 Things your coworkers should not have to know:
 
-Your coworkers should not have to know obscure DNS technical
+- Your coworkers should not have to know obscure DNS technical
 knowledge.  That's your job.
 
-Your coworkers should not have to know what happens in ambiguous
+- Your coworkers should not have to know what happens in ambiguous
 situations.  That's your job.
 
-Your coworkers should be able to submit PRs to `dnsconfig.js` for you
+- Your coworkers should be able to submit PRs to `dnsconfig.js` for you
 to approve; preferably via a CI system that does rudimentary checks
 before you even have to see the PR.
 
-Your coworkers should be able to figure out the language without
+- Your coworkers should be able to figure out the language without
 much training. The system should block them from doing dangerous
 things (even if they are technically legal).
 
@@ -127,7 +127,7 @@ else is ambiguous and therefore an error.
 # Opinion #7 Hostnames don't have underscores
 
 DNSControl prints warnings if a hostname includes an underscore
-(`_`) because underscores are not permitted in hostnames.  
+(`_`) because underscores are not permitted in hostnames.
 
 We want to prevent a naive user from including an underscore
 when they meant to use a hyphen (`-`).
@@ -150,3 +150,33 @@ Therefore we print a warning if a label has an underscore in it,
 unless the rtype is SRV, TLSA, TXT, or if the name starts with
 certain prefixes such as `_dmarc`.  We're always willing to
 [add more exceptions](https://github.com/StackExchange/dnscontrol/pull/453/files).
+
+# Opinion #8 TXT Records are one long string
+
+* TXT records are a single string with a length of 0 to 65,280 bytes
+  (the maximum possible TXT record size).
+
+It is the provider's responsibility to split, join, quote, parse,
+encode, or decoded the string as needed by the provider's API.  This
+should be invisible to the user.
+
+The user may represent the string any way that JavaScript permits
+strings to be represented (usually double-quotes).  For backwards
+compatibility they may also provide a list of strings which will be
+concatenated.
+
+You may be wondering: Isn't a TXT record really a series of 255-octet
+segments?  Yes, TXT record's wire-format is a series of strings, each
+no longer than 255-octets. However that kind of detail should be
+hidden from users. The user should represent the string they want and
+DNSControl should magically do the right thing behind the scenes. The
+same with quoting and escaping required by APIs.
+
+You may be wondering: Are there any higher-level applications which
+ascribe semantic value to the TXT string boundaries?  I believe that
+the answer is "no".  My proof is not based on reading RFCs, but
+instead based on (a) observing that I've never seen a DNS provider's
+control panel let you specify the boundaries, (b) I've never seen a
+FAQ or reddit post asking how to specify those boundaries. Therefore,
+there is no need for this. I also assert that there will be no such
+need in the future.

@@ -109,12 +109,12 @@ indent_style = space
 
 # Shell
 # https://google.github.io/styleguide/shell.xml#Indentation
-[*.{bash,sh,zsh}]
+[*.{bash,sh,zsh,*sh.gotmpl}]
 indent_size = 2
 indent_style = space
 
 # Svelte
-# https://github.com/sveltejs/svelte/blob/master/.editorconfig
+# https://github.com/sveltejs/svelte/blob/main/.editorconfig
 [*.svelte]
 indent_size = 2
 indent_style = tab

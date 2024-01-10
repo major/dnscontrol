@@ -13,22 +13,9 @@ If an rType has more than one field, one field goes in .target and the remaining
 Not the best design, but we're stuck with it until we re-do RecordConfig, possibly using generics.
 */
 
-// Set debugWarnTxtField to true if you want a warning when
-// GetTargetField is called on a TXT record.
-// GetTargetField works fine on TXT records for casual output but it
-// is often better to access .TxtStrings directly or call
-// GetTargetRFC1035Quoted() for nicely quoted text.
-var debugWarnTxtField = false
-
-// GetTargetField returns the target. There may be other fields (for example
-// an MX record also has a .MxPreference field.
+// GetTargetField returns the target. There may be other fields, but they are
+// not included. For example, the .MxPreference field of an MX record isn't included.
 func (rc *RecordConfig) GetTargetField() string {
-	if debugWarnTxtField {
-		if rc.Type == "TXT" {
-			fmt.Printf("DEBUG: WARNING: GetTargetField called on TXT record is frequently wrong: %q\n", rc.target)
-			//debug.PrintStack()
-		}
-	}
 	return rc.target
 }
 
@@ -40,15 +27,31 @@ func (rc *RecordConfig) GetTargetIP() net.IP {
 	return net.ParseIP(rc.target)
 }
 
+// GetTargetCombinedFunc returns all the rdata fields of a RecordConfig as one
+// string. How TXT records are encoded is defined by encodeFn.  If encodeFn is
+// nil the TXT data is returned unaltered.
+func (rc *RecordConfig) GetTargetCombinedFunc(encodeFn func(s string) string) string {
+	if rc.Type == "TXT" {
+		if encodeFn == nil {
+			return rc.target
+		}
+		return encodeFn(rc.target)
+	}
+	return rc.GetTargetCombined()
+}
+
 // GetTargetCombined returns a string with the various fields combined.
 // For example, an MX record might output `10 mx10.example.tld`.
+// WARNING: How TXT records are handled is buggy but we can't change it because
+// code depends on the bugs. Use Get GetTargetCombinedFunc() instead.
 func (rc *RecordConfig) GetTargetCombined() string {
+
 	// Pseudo records:
 	if _, ok := dns.StringToType[rc.Type]; !ok {
 		switch rc.Type { // #rtype_variations
 		case "R53_ALIAS":
 			// Differentiate between multiple R53_ALIASs on the same label.
-			return fmt.Sprintf("%s atype=%s zone_id=%s", rc.target, rc.R53Alias["type"], rc.R53Alias["zone_id"])
+			return fmt.Sprintf("%s atype=%s zone_id=%s evaluate_target_health=%s", rc.target, rc.R53Alias["type"], rc.R53Alias["zone_id"], rc.R53Alias["evaluate_target_health"])
 		case "AZURE_ALIAS":
 			// Differentiate between multiple AZURE_ALIASs on the same label.
 			return fmt.Sprintf("%s atype=%s", rc.target, rc.AzureAlias["type"])
@@ -58,7 +61,13 @@ func (rc *RecordConfig) GetTargetCombined() string {
 		}
 	}
 
-	if rc.Type == "SOA" {
+	// Everything else
+	switch rc.Type {
+	case "UNKNOWN":
+		return fmt.Sprintf("rtype=%s rdata=%s", rc.UnknownTypeName, rc.target)
+	case "TXT":
+		return rc.zoneFileQuoted()
+	case "SOA":
 		return fmt.Sprintf("%s %v %d %d %d %d %d", rc.target, rc.SoaMbox, rc.SoaSerial, rc.SoaRefresh, rc.SoaRetry, rc.SoaExpire, rc.SoaMinttl)
 	}
 
@@ -92,14 +101,13 @@ func (rc *RecordConfig) GetTargetRFC1035Quoted() string {
 	return rc.zoneFileQuoted()
 }
 
-// GetTargetSortable returns a string that is sortable.
-func (rc *RecordConfig) GetTargetSortable() string {
-	return rc.GetTargetDebug()
-}
-
 // GetTargetDebug returns a string with the various fields spelled out.
 func (rc *RecordConfig) GetTargetDebug() string {
-	content := fmt.Sprintf("%s %s %s %d", rc.Type, rc.NameFQDN, rc.target, rc.TTL)
+	target := rc.target
+	if rc.Type == "TXT" {
+		target = fmt.Sprintf("%q", target)
+	}
+	content := fmt.Sprintf("%s %s %s %d", rc.Type, rc.NameFQDN, target, rc.TTL)
 	switch rc.Type { // #rtype_variations
 	case "A", "AAAA", "AKAMAICDN", "CNAME", "DHCID", "NS", "PTR", "TXT":
 		// Nothing special.
@@ -114,7 +122,7 @@ func (rc *RecordConfig) GetTargetDebug() string {
 	case "NAPTR":
 		content += fmt.Sprintf(" naptrorder=%d naptrpreference=%d naptrflags=%s naptrservice=%s naptrregexp=%s", rc.NaptrOrder, rc.NaptrPreference, rc.NaptrFlags, rc.NaptrService, rc.NaptrRegexp)
 	case "R53_ALIAS":
-		content += fmt.Sprintf(" type=%s zone_id=%s", rc.R53Alias["type"], rc.R53Alias["zone_id"])
+		content += fmt.Sprintf(" type=%s zone_id=%s evaluate_target_health=%s", rc.R53Alias["type"], rc.R53Alias["zone_id"], rc.R53Alias["evaluate_target_health"])
 	case "SOA":
 		content = fmt.Sprintf("%s ns=%v mbox=%v serial=%v refresh=%v retry=%v expire=%v minttl=%v", rc.Type, rc.target, rc.SoaMbox, rc.SoaSerial, rc.SoaRefresh, rc.SoaRetry, rc.SoaExpire, rc.SoaMinttl)
 	case "SRV":

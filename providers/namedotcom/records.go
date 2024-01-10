@@ -8,7 +8,7 @@ import (
 
 	"github.com/StackExchange/dnscontrol/v4/models"
 	"github.com/StackExchange/dnscontrol/v4/pkg/diff"
-	"github.com/StackExchange/dnscontrol/v4/pkg/diff2"
+	"github.com/StackExchange/dnscontrol/v4/pkg/txtutil"
 	"github.com/namedotcom/go/namecom"
 )
 
@@ -29,7 +29,6 @@ func (n *namedotcomProvider) GetZoneRecords(domain string, meta map[string]strin
 
 // GetZoneRecordsCorrections returns a list of corrections that will turn existing records into dc.Records.
 func (n *namedotcomProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, actual models.Records) ([]*models.Correction, error) {
-
 	checkNSModifications(dc)
 
 	for _, rec := range dc.Records {
@@ -38,17 +37,12 @@ func (n *namedotcomProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, 
 		}
 	}
 
-	var corrections []*models.Correction
-	var differ diff.Differ
-	if !diff2.EnableDiff2 {
-		differ = diff.New(dc)
-	} else {
-		differ = diff.NewCompat(dc)
-	}
-	_, create, del, mod, err := differ.IncrementalDiff(actual)
+	toReport, create, del, mod, err := diff.NewCompat(dc).IncrementalDiff(actual)
 	if err != nil {
 		return nil, err
 	}
+	// Start corrections with the reports
+	corrections := diff.GenerateMessageCorrections(toReport)
 
 	for _, d := range del {
 		rec := d.Existing.Original.(*namecom.Record)
@@ -161,7 +155,7 @@ func (n *namedotcomProvider) createRecord(rc *models.RecordConfig, domain string
 	case "A", "AAAA", "ANAME", "CNAME", "MX", "NS":
 	// nothing
 	case "TXT":
-	// 	record.Answer = encodeTxt(rc.TxtStrings)
+		record.Answer = txtutil.EncodeQuoted(rc.GetTargetTXTJoined())
 	case "SRV":
 		if rc.GetTargetField() == "." {
 			return errors.New("SRV records with empty targets are not supported (as of 2019-11-05, the API returns 'Parameter Value Error - Invalid Srv Format')")
@@ -182,6 +176,7 @@ var quotedStringRegexp = regexp.MustCompile(`"((?:[^"\\]|\\.)*)"`)
 
 // decodeTxt decodes the TXT record as received from name.com and
 // returns the list of strings.
+// NB(tlim): This is very similar to txtutil.ParseQuoted. Maybe replace it some day?
 func decodeTxt(s string) []string {
 
 	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {

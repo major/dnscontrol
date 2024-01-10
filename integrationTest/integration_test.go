@@ -12,7 +12,6 @@ import (
 
 	"github.com/StackExchange/dnscontrol/v4/models"
 	"github.com/StackExchange/dnscontrol/v4/pkg/credsfile"
-	"github.com/StackExchange/dnscontrol/v4/pkg/diff2"
 	"github.com/StackExchange/dnscontrol/v4/pkg/nameservers"
 	"github.com/StackExchange/dnscontrol/v4/pkg/zonerecs"
 	"github.com/StackExchange/dnscontrol/v4/providers"
@@ -31,7 +30,6 @@ var enableCFWorkers = flag.Bool("cfworkers", true, "Set false to disable CF work
 func init() {
 	testing.Init()
 
-	flag.BoolVar(&diff2.EnableDiff2, "diff2", false, "enable diff2")
 	flag.Parse()
 }
 
@@ -139,11 +137,6 @@ func getDomainConfigWithNameservers(t *testing.T, prv providers.DNSServiceProvid
 // error explaining why it is not.
 func testPermitted(t *testing.T, p string, f TestGroup) error {
 
-	// Does this test require "diff2"?
-	if f.diff2only && !diff2.EnableDiff2 {
-		return fmt.Errorf("test for diff2 only")
-	}
-
 	// not() and only() can't be mixed.
 	if len(f.only) != 0 && len(f.not) != 0 {
 		return fmt.Errorf("invalid filter: can't mix not() and only()")
@@ -223,8 +216,6 @@ func makeChanges(t *testing.T, prv providers.DNSServiceProvider, dc *models.Doma
 			// records (A or AAAA)
 			dom.Records = append(dom.Records, a("ns."+domainName+".", "9.8.7.6"))
 		}
-		dom.IgnoredNames = tst.IgnoredNames
-		dom.IgnoredTargets = tst.IgnoredTargets
 		dom.Unmanaged = tst.Unmanaged
 		dom.UnmanagedUnsafe = tst.UnmanagedUnsafe
 		models.PostProcessRecords(dom.Records)
@@ -297,12 +288,8 @@ func runTests(t *testing.T, prv providers.DNSServiceProvider, domainName string,
 		lastGroup = len(testGroups)
 	}
 
-	// Start the zone with a clean slate.
-	makeChanges(t, prv, dc, tc("Empty"), "Clean Slate", false, nil)
-
 	curGroup := -1
 	for gIdx, group := range testGroups {
-		start := time.Now()
 
 		// Abide by -start -end flags
 		curGroup++
@@ -317,7 +304,11 @@ func runTests(t *testing.T, prv providers.DNSServiceProvider, domainName string,
 			continue
 		}
 
+		// Start the testgroup with a clean slate.
+		makeChanges(t, prv, dc, tc("Empty"), "Clean Slate", false, nil)
+
 		// Run the tests.
+		start := time.Now()
 
 		for _, tst := range group.tests {
 
@@ -334,9 +325,6 @@ func runTests(t *testing.T, prv providers.DNSServiceProvider, domainName string,
 			}
 
 		}
-
-		// Remove all records so next group starts with a clean slate.
-		makeChanges(t, prv, dc, tc("Empty"), "Post cleanup", true, nil)
 
 		elapsed := time.Since(start)
 		if *printElapsed {
@@ -442,14 +430,11 @@ type TestGroup struct {
 	not       []string
 	trueflags []bool
 	tests     []*TestCase
-	diff2only bool
 }
 
 type TestCase struct {
 	Desc            string
 	Records         []*models.RecordConfig
-	IgnoredNames    []*models.IgnoreName
-	IgnoredTargets  []*models.IgnoreTarget
 	Unmanaged       []*models.UnmanagedConfig
 	UnmanagedUnsafe bool // DISABLE_IGNORE_SAFETY_CHECK
 	Changeless      bool // set to true if any changes would be an error
@@ -467,11 +452,6 @@ func (tc *TestCase) UnsafeIgnore() *TestCase {
 	return tc
 }
 
-func (tg *TestGroup) Diff2Only() *TestGroup {
-	tg.diff2only = true
-	return tg
-}
-
 func SetLabel(r *models.RecordConfig, label, domain string) {
 	r.Name = label
 	r.NameFQDN = dnsutil.AddOrigin(label, "**current-domain**")
@@ -479,6 +459,10 @@ func SetLabel(r *models.RecordConfig, label, domain string) {
 
 func a(name, target string) *models.RecordConfig {
 	return makeRec(name, target, "A")
+}
+
+func aaaa(name, target string) *models.RecordConfig {
+	return makeRec(name, target, "AAAA")
 }
 
 func alias(name, target string) *models.RecordConfig {
@@ -546,29 +530,11 @@ func ds(name string, keyTag uint16, algorithm, digestType uint8, digest string) 
 }
 
 func ignoreName(labelSpec string) *models.RecordConfig {
-	r := &models.RecordConfig{
-		Type:     "IGNORE_NAME",
-		Metadata: map[string]string{},
-	}
-	// diff1
-	SetLabel(r, labelSpec, "**current-domain**")
-	// diff2
-	r.Metadata["ignore_LabelPattern"] = labelSpec
-	return r
+	return ignore(labelSpec, "*", "*")
 }
 
 func ignoreTarget(targetSpec string, typeSpec string) *models.RecordConfig {
-	r := &models.RecordConfig{
-		Type:     "IGNORE_TARGET",
-		Metadata: map[string]string{},
-	}
-	// diff1
-	r.SetTarget(typeSpec)
-	SetLabel(r, targetSpec, "**current-domain**")
-	// diff2
-	r.Metadata["ignore_RTypePattern"] = typeSpec
-	r.Metadata["ignore_TargetPattern"] = typeSpec
-	return r
+	return ignore("*", "*", targetSpec)
 }
 
 func ignore(labelSpec string, typeSpec string, targetSpec string) *models.RecordConfig {
@@ -576,9 +542,7 @@ func ignore(labelSpec string, typeSpec string, targetSpec string) *models.Record
 		Type:     "IGNORE",
 		Metadata: map[string]string{},
 	}
-	if r.Metadata == nil {
-		r.Metadata = map[string]string{}
-	}
+
 	r.Metadata["ignore_LabelPattern"] = labelSpec
 	r.Metadata["ignore_RTypePattern"] = typeSpec
 	r.Metadata["ignore_TargetPattern"] = targetSpec
@@ -630,10 +594,11 @@ func ptr(name, target string) *models.RecordConfig {
 	return makeRec(name, target, "PTR")
 }
 
-func r53alias(name, aliasType, target string) *models.RecordConfig {
+func r53alias(name, aliasType, target, evalTargetHealth string) *models.RecordConfig {
 	r := makeRec(name, target, "R53_ALIAS")
 	r.R53Alias = map[string]string{
-		"type": aliasType,
+		"type":                   aliasType,
+		"evaluate_target_health": evalTargetHealth,
 	}
 	return r
 }
@@ -672,7 +637,6 @@ func makeOvhNativeRecord(name, target, rType string) *models.RecordConfig {
 	r := makeRec(name, "", "TXT")
 	r.Metadata = make(map[string]string)
 	r.Metadata["create_ovh_native_record"] = rType
-	r.TxtStrings = []string{target}
 	r.SetTarget(target)
 	return r
 }
@@ -716,50 +680,24 @@ func testgroup(desc string, items ...interface{}) *TestGroup {
 
 func tc(desc string, recs ...*models.RecordConfig) *TestCase {
 	var records []*models.RecordConfig
-	var ignoredNames []*models.IgnoreName
-	var ignoredTargets []*models.IgnoreTarget
 	var unmanagedItems []*models.UnmanagedConfig
 	for _, r := range recs {
 		switch r.Type {
 		case "IGNORE":
-			// diff1:
-			ignoredNames = append(ignoredNames, &models.IgnoreName{
-				Pattern: r.Metadata["ignore_LabelPattern"],
-				Types:   r.Metadata["ignore_RTypePattern"],
-			})
-			// diff2:
 			unmanagedItems = append(unmanagedItems, &models.UnmanagedConfig{
 				LabelPattern:  r.Metadata["ignore_LabelPattern"],
 				RTypePattern:  r.Metadata["ignore_RTypePattern"],
 				TargetPattern: r.Metadata["ignore_TargetPattern"],
 			})
 			continue
-		case "IGNORE_NAME":
-			ignoredNames = append(ignoredNames, &models.IgnoreName{Pattern: r.GetLabel(), Types: r.GetTargetField()})
-			unmanagedItems = append(unmanagedItems, &models.UnmanagedConfig{
-				LabelPattern: r.GetLabel(),
-				RTypePattern: r.GetTargetField(),
-			})
-			continue
-		case "IGNORE_TARGET":
-			ignoredTargets = append(ignoredTargets, &models.IgnoreTarget{
-				Pattern: r.GetLabel(),
-				Type:    r.GetTargetField(),
-			})
-			unmanagedItems = append(unmanagedItems, &models.UnmanagedConfig{
-				RTypePattern:  r.GetTargetField(),
-				TargetPattern: r.GetLabel(),
-			})
 		default:
 			records = append(records, r)
 		}
 	}
 	return &TestCase{
-		Desc:           desc,
-		Records:        records,
-		IgnoredNames:   ignoredNames,
-		IgnoredTargets: ignoredTargets,
-		Unmanaged:      unmanagedItems,
+		Desc:      desc,
+		Records:   records,
+		Unmanaged: unmanagedItems,
 	}
 }
 
@@ -859,11 +797,9 @@ func makeTests(t *testing.T) []*TestGroup {
 	// whether or not a certain kind of record can be created and
 	// deleted.
 
-	// clear() is the same as tc("Empty").  It removes all records.  You
-	// can use this to verify a provider can delete all the records in
-	// the last tc(), or to provide a clean slate for the next tc().
-	// Each testgroup() begins and ends with clear(), so you don't have
-	// to list the clear() yourself.
+	// clear() is the same as tc("Empty").  It removes all records.
+	// Each testgroup() begins with clear() automagically. You do not
+	// have to include the clear() in teach testgroup().
 
 	tests := []*TestGroup{
 
@@ -936,7 +872,10 @@ func makeTests(t *testing.T) []*TestGroup {
 		// Narrative: That wasn't as hard as expected, eh?  Let's test the
 		// other basic record types like AAAA, CNAME, MX and TXT.
 
-		// AAAA: TODO(tlim) Add AAAA test.
+		testgroup("AAAA",
+			tc("Create AAAA", aaaa("testaaaa", "2607:f8b0:4006:820::2006")),
+			tc("Change AAAA target", aaaa("testaaaa", "2607:f8b0:4006:820::2013")),
+		),
 
 		// CNAME
 
@@ -1090,11 +1029,17 @@ func makeTests(t *testing.T) []*TestGroup {
 		// that.
 
 		testgroup("CNAME",
-			tc("Record pointing to @", cname("foo", "**current-domain**")),
+			tc("Record pointing to @",
+				cname("foo", "**current-domain**"),
+				a("@", "1.2.3.4"),
+			),
 		),
 
 		testgroup("MX",
-			tc("Record pointing to @", mx("foo", 8, "**current-domain**")),
+			tc("Record pointing to @",
+				mx("foo", 8, "**current-domain**"),
+				a("@", "1.2.3.4"),
+			),
 			tc("Null MX", mx("@", 0, ".")), // RFC 7505
 		),
 
@@ -1134,39 +1079,70 @@ func makeTests(t *testing.T) []*TestGroup {
 			// Do not use only()/not()/requires() in this section.
 			// If your provider needs to skip one of these tests, update
 			// "provider/*/recordaudit.AuditRecords()" to reject that kind
-			// of record. When the provider fixes the bug or changes behavior,
-			// update the AuditRecords().
+			// of record.
 
-			//clear(),
-			//tc("a 255-byte TXT", txt("foo255", strings.Repeat("C", 255))),
-			//clear(),
-			//tc("a 256-byte TXT", txt("foo256", strings.Repeat("D", 256))),
-			//clear(),
-			//tc("a 512-byte TXT", txt("foo512", strings.Repeat("C", 512))),
-			//clear(),
-			//tc("a 513-byte TXT", txt("foo513", strings.Repeat("D", 513))),
+			// Some of these test cases are commented out because they test
+			// something that isn't widely used or supported.  For example
+			// many APIs don't support a backslack (`\`) in a TXT record;
+			// luckily we've never seen a need for that "in the wild".  If
+			// you want to future-proof your provider, temporarily remove
+			// the comments and get those tests working, or reject it using
+			// auditrecords.go.
+
+			// ProTip: Unsure how a provider's API escapes something? Try
+			// adding the TXT record via the Web UI and watch how the string
+			// is escaped when you download the records.
+
+			// Nobody needs this and many APIs don't allow it.
+			tc("a 0-byte TXT", txt("foo0", "")),
+
+			// Test edge cases around 255, 255*2, 255*3:
+			tc("a 254-byte TXT", txt("foo254", strings.Repeat("A", 254))), // 255-1
+			tc("a 255-byte TXT", txt("foo255", strings.Repeat("B", 255))), // 255
+			tc("a 256-byte TXT", txt("foo256", strings.Repeat("C", 256))), // 255+1
+			tc("a 509-byte TXT", txt("foo509", strings.Repeat("D", 509))), // 255*2-1
+			tc("a 510-byte TXT", txt("foo510", strings.Repeat("E", 510))), // 255*2
+			tc("a 511-byte TXT", txt("foo511", strings.Repeat("F", 511))), // 255*2+1
+			tc("a 764-byte TXT", txt("foo764", strings.Repeat("G", 764))), // 255*3-1
+			tc("a 765-byte TXT", txt("foo765", strings.Repeat("H", 765))), // 255*3
+			tc("a 766-byte TXT", txt("foo766", strings.Repeat("J", 766))), // 255*3+1
 			//clear(),
 
 			tc("TXT with 1 single-quote", txt("foosq", "quo'te")),
-			//clear(),
 			tc("TXT with 1 backtick", txt("foobt", "blah`blah")),
-			//clear(),
-			tc("TXT with 1 double-quotes", txt("foodq", `quo"te`)),
-			//clear(),
-			tc("TXT with 2 double-quotes", txt("foodqs", `q"uo"te`)),
-			//clear(),
+			tc("TXT with 1 dq-1interior", txt("foodq", `in"side`)),
+			tc("TXT with 2 dq-2interior", txt("foodqs", `in"ter"ior`)),
+			tc("TXT with 1 dq-left", txt("foodqs", `"left`)),
+			tc("TXT with 1 dq-right", txt("foodqs", `right"`)),
 
-			tc("a TXT with interior ws", txt("foosp", "with spaces")),
-			//clear(),
-			tc("TXT with ws at end", txt("foows1", "with space at end ")),
-			//clear(),
+			// Semicolons don't need special treatment.
+			// https://serverfault.com/questions/743789
+			tc("TXT with semicolon", txt("foosc1", `semi;colon`)),
+			tc("TXT with semicolon ws", txt("foosc2", `wssemi ; colon`)),
 
-			//tc("Create a TXT/SPF", txt("foo", "v=spf1 ip4:99.99.99.99 -all")),
-			// This was added because Vultr syntax-checks TXT records with SPF contents.
-			//clear(),
+			tc("TXT interior ws", txt("foosp", "with spaces")),
+			//tc("TXT leading ws", txt("foowsb", " leadingspace")),
+			tc("TXT trailing ws", txt("foows1", "trailingws ")),
 
-			// TODO(tlim): Re-add this when we fix the RFC1035 escaped-quotes issue.
-			//tc("Create TXT with frequently escaped characters", txt("fooex", `!^.*$@#%^&()([][{}{<></:;-_=+\`)),
+			// Vultr syntax-checks TXT records with SPF contents.
+			tc("Create a TXT/SPF", txt("foo", "v=spf1 ip4:99.99.99.99 -all")),
+
+			// Nobody needs this and many APIs don't allow it.
+			tc("TXT with 1 backslash", txt("fooosbs1", `1back\slash`)),
+			tc("TXT with 2 backslash", txt("fooosbs2", `2back\\slash`)),
+			tc("TXT with 3 backslash", txt("fooosbs3", `3back\\\slash`)),
+			tc("TXT with 4 backslash", txt("fooosbs4", `4back\\\\slash`)),
+
+			// Nobody needs this and many APIs don't allow it.
+			//tc("Create TXT with frequently difficult characters", txt("fooex", `!^.*$@#%^&()([][{}{<></:;-_=+\`)),
+		),
+
+		testgroup("TXT backslashes",
+			tc("TXT with backslashs",
+				txt("fooosbs1", `1back\slash`),
+				txt("fooosbs2", `2back\\slash`),
+				txt("fooosbs3", `3back\\\slash`),
+				txt("fooosbs4", `4back\\\\slash`)),
 		),
 
 		//
@@ -1293,14 +1269,15 @@ func makeTests(t *testing.T) []*TestGroup {
 				"AZURE_DNS",     // Removed because it is too slow
 				"CLOUDFLAREAPI", // Infinite pagesize but due to slow speed, skipping.
 				"DIGITALOCEAN",  // No paging. Why bother?
-				"CSCGLOBAL",     // Doesn't page. Works fine.  Due to the slow API we skip.
-				"GANDI_V5",      // Their API is so damn slow. We'll add it back as needed.
-				"HEDNS",         // Doesn't page. Works fine.  Due to the slow API we skip.
-				"LOOPIA",        // Their API is so damn slow. Plus, no paging.
-				"MSDNS",         // No paging done. No need to test.
-				"NAMEDOTCOM",    // Their API is so damn slow. We'll add it back as needed.
-				"NS1",           // Free acct only allows 50 records, therefore we skip
+				//"CSCGLOBAL",     // Doesn't page. Works fine.  Due to the slow API we skip.
+				"GANDI_V5",   // Their API is so damn slow. We'll add it back as needed.
+				"HEDNS",      // Doesn't page. Works fine.  Due to the slow API we skip.
+				"LOOPIA",     // Their API is so damn slow. Plus, no paging.
+				"MSDNS",      // No paging done. No need to test.
+				"NAMEDOTCOM", // Their API is so damn slow. We'll add it back as needed.
+				"NS1",        // Free acct only allows 50 records, therefore we skip
 				//"ROUTE53",       // Batches up changes in pages.
+				"TRANSIP", // Doesn't page. Works fine.  Due to the slow API we skip.
 			),
 			tc("99 records", manyA("rec%04d", "1.2.3.4", 99)...),
 			tc("100 records", manyA("rec%04d", "1.2.3.4", 100)...),
@@ -1338,6 +1315,23 @@ func makeTests(t *testing.T) []*TestGroup {
 			),
 			tc("1200 records", manyA("rec%04d", "1.2.3.4", 1200)...),
 			tc("Update 1200 records", manyA("rec%04d", "1.2.3.5", 1200)...),
+		),
+
+		// Test the boundaries of Google' batch system.
+		// 1200 is used because it is larger than batchMax.
+		// https://github.com/StackExchange/dnscontrol/pull/2762#issuecomment-1877825559
+		testgroup("batchRecordswithOthers",
+			only(
+				"GCLOUD",
+			),
+			tc("1200 records",
+				manyA("rec%04d", "1.2.3.4", 1200)...),
+			tc("Update 1200 records and Create others", append(
+				manyA("arec%04d", "1.2.3.4", 1200),
+				manyA("rec%04d", "1.2.3.5", 1200)...)...),
+			tc("Update 1200 records and Create and Delete others", append(
+				manyA("rec%04d", "1.2.3.4", 1200),
+				manyA("zrec%04d", "1.2.3.4", 1200)...)...),
 		),
 
 		//// CanUse* types:
@@ -1557,10 +1551,10 @@ func makeTests(t *testing.T) []*TestGroup {
 			//	ns("another-child", "ns101.cloudns.net."),
 			//),
 		),
-		testgroup("DHCPID",
+		testgroup("DHCID",
 			requires(providers.CanUseDHCID),
-			tc("Create DHCPID record", dhcid("test", "AAIBY2/AuCccgoJbsaxcQc9TUapptP69lOjxfNuVAA2kjEA=")),
-			tc("Modify DHCPID record", dhcid("test", "Test/AuCccgoJbsaxcQc9TUapptP69lOjxfNuVAA2kjEA=")),
+			tc("Create DHCID record", dhcid("test", "AAIBY2/AuCccgoJbsaxcQc9TUapptP69lOjxfNuVAA2kjEA=")),
+			tc("Modify DHCID record", dhcid("test", "Test/AuCccgoJbsaxcQc9TUapptP69lOjxfNuVAA2kjEA=")),
 		),
 
 		//// Vendor-specific record types
@@ -1570,10 +1564,15 @@ func makeTests(t *testing.T) []*TestGroup {
 		// them here. If you are writing a new provider, I have some good
 		// news: These don't apply to you!
 
-		testgroup("ALIAS",
+		testgroup("ALIAS on apex",
 			requires(providers.CanUseAlias),
 			tc("ALIAS at root", alias("@", "foo.com.")),
 			tc("change it", alias("@", "foo2.com.")),
+		),
+
+		testgroup("ALIAS on subdomain",
+			requires(providers.CanUseAlias),
+			not("TRANSIP"), // TransIP does support ALIAS records, but only for apex records (@)
 			tc("ALIAS at subdomain", alias("test", "foo.com.")),
 			tc("change it", alias("test", "foo2.com.")),
 		),
@@ -1637,12 +1636,12 @@ func makeTests(t *testing.T) []*TestGroup {
 			tc("ALIAS to A record in same zone",
 				a("kyle", "1.2.3.4"),
 				a("cartman", "2.3.4.5"),
-				r53alias("kenny", "A", "kyle.**current-domain**"),
+				r53alias("kenny", "A", "kyle.**current-domain**", "false"),
 			),
 			tc("modify an r53 alias",
 				a("kyle", "1.2.3.4"),
 				a("cartman", "2.3.4.5"),
-				r53alias("kenny", "A", "cartman.**current-domain**"),
+				r53alias("kenny", "A", "cartman.**current-domain**", "false"),
 			),
 		),
 
@@ -1655,12 +1654,12 @@ func makeTests(t *testing.T) []*TestGroup {
 			tc("add an alias to 18",
 				cname("dev-system18", "ec2-54-91-33-155.compute-1.amazonaws.com."),
 				cname("dev-system19", "ec2-54-91-99-999.compute-1.amazonaws.com."),
-				r53alias("dev-system", "CNAME", "dev-system18.**current-domain**"),
+				r53alias("dev-system", "CNAME", "dev-system18.**current-domain**", "false"),
 			),
 			tc("modify alias to 19",
 				cname("dev-system18", "ec2-54-91-33-155.compute-1.amazonaws.com."),
 				cname("dev-system19", "ec2-54-91-99-999.compute-1.amazonaws.com."),
-				r53alias("dev-system", "CNAME", "dev-system19.**current-domain**"),
+				r53alias("dev-system", "CNAME", "dev-system19.**current-domain**", "false"),
 			),
 			tc("remove alias",
 				cname("dev-system18", "ec2-54-91-33-155.compute-1.amazonaws.com."),
@@ -1669,17 +1668,17 @@ func makeTests(t *testing.T) []*TestGroup {
 			tc("add an alias back",
 				cname("dev-system18", "ec2-54-91-33-155.compute-1.amazonaws.com."),
 				cname("dev-system19", "ec2-54-91-99-999.compute-1.amazonaws.com."),
-				r53alias("dev-system", "CNAME", "dev-system19.**current-domain**"),
+				r53alias("dev-system", "CNAME", "dev-system19.**current-domain**", "false"),
 			),
 			tc("remove cnames",
-				r53alias("dev-system", "CNAME", "dev-system19.**current-domain**"),
+				r53alias("dev-system", "CNAME", "dev-system19.**current-domain**", "false"),
 			),
 		),
 
 		testgroup("R53_ALIAS_CNAME",
 			requires(providers.CanUseRoute53Alias),
 			tc("create alias+cname in one step",
-				r53alias("dev-system", "CNAME", "dev-system18.**current-domain**"),
+				r53alias("dev-system", "CNAME", "dev-system18.**current-domain**", "false"),
 				cname("dev-system18", "ec2-54-91-33-155.compute-1.amazonaws.com."),
 			),
 		),
@@ -1690,7 +1689,7 @@ func makeTests(t *testing.T) []*TestGroup {
 			// See https://github.com/StackExchange/dnscontrol/issues/2107
 			requires(providers.CanUseRoute53Alias),
 			tc("loop should fail",
-				r53alias("test-islandora", "CNAME", "test-islandora.**current-domain**"),
+				r53alias("test-islandora", "CNAME", "test-islandora.**current-domain**", "false"),
 			),
 		),
 
@@ -1698,12 +1697,24 @@ func makeTests(t *testing.T) []*TestGroup {
 		testgroup("R53_alias pre-existing",
 			requires(providers.CanUseRoute53Alias),
 			tc("Create some records",
-				r53alias("dev-system", "CNAME", "dev-system18.**current-domain**"),
+				r53alias("dev-system", "CNAME", "dev-system18.**current-domain**", "false"),
 				cname("dev-system18", "ec2-54-91-33-155.compute-1.amazonaws.com."),
 			),
 			tc("Add a new record - ignoring foo",
 				a("bar", "1.2.3.4"),
 				ignoreName("dev-system*"),
+			),
+		),
+
+		testgroup("R53_alias evaluate_target_health",
+			requires(providers.CanUseRoute53Alias),
+			tc("Create alias and cname",
+				r53alias("test-record", "CNAME", "test-record-1.**current-domain**", "false"),
+				cname("test-record-1", "ec2-54-91-33-155.compute-1.amazonaws.com."),
+			),
+			tc("modify evaluate target health",
+				r53alias("test-record", "CNAME", "test-record-1.**current-domain**", "true"),
+				cname("test-record-1", "ec2-54-91-33-155.compute-1.amazonaws.com."),
 			),
 		),
 
@@ -1914,7 +1925,7 @@ func makeTests(t *testing.T) []*TestGroup {
 			tc("ignore manytypes",
 				ignore("", "A,TXT", ""),
 			).ExpectNoChanges(),
-		).Diff2Only(),
+		),
 
 		testgroup("IGNORE apex",
 			tc("Create some records",
@@ -1935,7 +1946,7 @@ func makeTests(t *testing.T) []*TestGroup {
 			tc("ignore manytypes",
 				ignore("", "A,TXT", ""),
 			).ExpectNoChanges().UnsafeIgnore(),
-		).Diff2Only(),
+		),
 
 		// Legacy IGNORE_NAME and IGNORE_TARGET tests.
 
@@ -1968,7 +1979,7 @@ func makeTests(t *testing.T) []*TestGroup {
 				ignoreName("*.foo"),
 				a("bar", "1.2.3.4"),
 			),
-		).Diff2Only(),
+		),
 
 		testgroup("IGNORE_NAME apex",
 			tc("Create some records",
@@ -1989,7 +2000,7 @@ func makeTests(t *testing.T) []*TestGroup {
 				a("bar", "2.4.6.8"),
 				a("added", "4.6.8.9"),
 			).UnsafeIgnore(),
-		).Diff2Only(),
+		),
 
 		testgroup("IGNORE_TARGET function CNAME",
 			tc("Create some records",
@@ -2047,9 +2058,6 @@ func makeTests(t *testing.T) []*TestGroup {
 		),
 
 		// https://github.com/StackExchange/dnscontrol/issues/2285
-		// IGNORE_TARGET for CNAMEs wasn't working for AZURE_DNS.
-		// Interestingly enough, this has never worked with
-		// GANDI_V5/diff1.  It works on all providers in diff2.
 		testgroup("IGNORE_TARGET b2285",
 			tc("Create some records",
 				cname("foo", "redact1.acm-validations.aws."),
@@ -2058,7 +2066,7 @@ func makeTests(t *testing.T) []*TestGroup {
 			tc("Add a new record - ignoring test.foo.com.",
 				ignoreTarget("**.acm-validations.aws.", "CNAME"),
 			).ExpectNoChanges(),
-		).Diff2Only(),
+		),
 
 		testgroup("structured TXT",
 			only("OVH"),
@@ -2082,6 +2090,11 @@ func makeTests(t *testing.T) []*TestGroup {
 				ovhspf("spf", "v=spf1 a mx -all"),
 				ovhdkim("dkim", "v=DKIM1;t=s;p=MIGfMA0GCSqGSIb3DQEBAQUAA4GNADCBiQKBgQDk72yk6UML8LGIXFobhvx6UDUntqGzmyie2FLMyrOYk1C7CVYR139VMbO9X1rFvZ8TaPnMCkMbuEGWGgWNc27MLYKfI+wP/SYGjRS98TNl9wXxP8tPfr6id5gks95sEMMaYTu8sctnN6sBOvr4hQ2oipVcBn/oxkrfhqvlcat5gQIDAQAB"),
 				ovhdmarc("_dmarc", "v=DMARC1; p=none; rua=mailto:dmarc@example.com")),
+		),
+
+		// This MUST be the last test.
+		testgroup("final",
+			tc("final", txt("final", `TestDNSProviders was successful!`)),
 		),
 
 		// Narrative: Congrats! You're done!  If you've made it this far

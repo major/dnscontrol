@@ -72,6 +72,9 @@ var (
 // variable name is easy to grep for when we make the conversion.
 var SkinnyReport = true
 
+// MaxReport represents how many records to show if SkinnyReport == true
+var MaxReport = 5
+
 // ConsolePrinter is a handle for the console printer.
 type ConsolePrinter struct {
 	Reader *bufio.Reader
@@ -92,14 +95,12 @@ func (c ConsolePrinter) PrintCorrection(i int, correction *models.Correction) {
 
 // PrintReport is called to print/format each non-mutating correction (diff2.REPORT).
 func (c ConsolePrinter) PrintReport(i int, correction *models.Correction) {
-	// When diff1 is eliminated:
-	//fmt.Fprintf(c.Writer, "INFO#%d: %s\n", i+1, correction.Msg)
-	fmt.Fprintf(c.Writer, "INFO: %s\n", correction.Msg)
+	fmt.Fprintf(c.Writer, "INFO#%d: %s\n", i+1, correction.Msg)
 }
 
 // PromptToRun prompts the user to see if they want to execute a correction.
 func (c ConsolePrinter) PromptToRun() bool {
-	fmt.Fprint(c.Writer, "Run? (Y/n): ")
+	fmt.Fprint(c.Writer, "Run? (y/N): ")
 	txt, err := c.Reader.ReadString('\n')
 	run := true
 	if err != nil {
@@ -128,7 +129,7 @@ func (c ConsolePrinter) EndCorrection(err error) {
 func (c ConsolePrinter) StartDNSProvider(provider string, skip bool) {
 	lbl := ""
 	if skip {
-		lbl = " (skipping)\n"
+		lbl = " (skipping)"
 	}
 	if !SkinnyReport {
 		fmt.Fprintf(c.Writer, "----- DNS Provider: %s...%s\n", provider, lbl)
@@ -139,7 +140,7 @@ func (c ConsolePrinter) StartDNSProvider(provider string, skip bool) {
 func (c ConsolePrinter) StartRegistrar(provider string, skip bool) {
 	lbl := ""
 	if skip {
-		lbl = " (skipping)\n"
+		lbl = " (skipping)"
 	}
 	if !SkinnyReport {
 		fmt.Fprintf(c.Writer, "----- Registrar: %s...%s\n", provider, lbl)

@@ -10,6 +10,8 @@ assigned bugs related to the provider in the future (unless
 you designate someone else as the maintainer). More details
 [here](providers.md).
 
+Please follow the [DNSControl Code Style Guide](https://docs.dnscontrol.org/developer-info/styleguide-code) and the [DNSControl Documentation Style Guide](https://docs.dnscontrol.org/developer-info/styleguide-doc).
+
 ## Overview
 
 I'll ignore all the small stuff and get to the point.
@@ -62,67 +64,48 @@ you write the DnsProvider first, release it, and then write the
 Registrar if needed.
 
 If you have any questions, please discuss them in the GitHub issue
-related to the request for this provider. Please let us know what
+related to the request for this provider.
+
+This document is constantly being updated.  Please let us know what
 was confusing so we can update this document with advice for future
-authors (or even better, update [this document](https://github.com/StackExchange/dnscontrol/blob/master/documentation/writing-providers.md)
-yourself.)
-
-## NOTE: diff2
-
-We are in the process of changing how providers work. Sadly this document
-hasn't been fully updated yet.
-
-We are in the process of changing all providers from using `pkg/diff` to
-`pkg/diff2`.  diff2 is much easier to use as it does all the hard work for you.
-Providers are easier to write, there's less code for you to write, and fewer
-chances to make mistakes.
-
-New providers only need to implement diff2.  Older providers are implemented
-both ways, with a flag (`--diff2`) enabling the newer code.  Soon the new code
-will become the default, then the old code will be removed.
-
-The file `pkg/diff2/diff2.go` has instructions about how to use the new diff2 system.
-You can also do `grep diff2.By providers/*/*.go` to find providers that use
-the new system.
-
-Each DNS provider's API is different.  Some update one DNS record at a time.
-Others, the only change they permit is to upload the entire zone even if only one record changed!
-Others are somewhere in between: all records at a label must be updated at once, or all records
-in a RecordSet (the label + rType).  diff2 provides functions for all of these situations:
-
-diff2.ByRecord() -- Updates are done one DNS record at a time. New records are added. Changes and deletes refer to an ID assigned to the record by the provider.
-diff2.ByLabel() -- Updates are done for an entire label. Adds and changes are done by sending one or more records that will appear at that label (i.e. www.example.com). Deletes delete all records at that label.
-diff2.ByRecordSet() -- Similar to ByLabel() but updates are done on the label+type level. If www.example.com has 2 A records and 2 MX records, 
-
-
-
+authors (or even better send a PR!).
 
 ## Step 2: Pick a base provider
 
-Pick a similar provider as your base.  Providers basically fall
-into three general categories:
+It's a good idea to start by copying a similar provider.
 
-NOTE: diff2 changes this.  For now, you can simply run `grep diff2.By providers/*/*.go` to see which
-providers use ByZone, ByLabel, ByRecord, ByRecordSet and pick a similar provider to copy from.
+How can you tell a provider is similar?
 
-* **zone:** The API requires you to upload the entire zone every time. (BIND, NAMECHEAP).
-* **incremental-record:** The API lets you add/change/delete individual DNS records. (CLOUDFLARE, DNSIMPLE, NAMEDOTCOM, GCLOUD, HEXONET)
-* **incremental-label:** Like incremental-record, but if there are
-  multiple records on a label (for example, example www.example.com
-has A and MX records), you have to replace all the records at that
-label. (GANDI_V5)
-* **incremental-label-type:** Like incremental-record, but updates to any records at a label have to be done by type.  For example, if a label (www.example.com) has many A and MX records, even the smallest change to one of the A records requires replacing all the A records. Any changes to the MX records requires replacing all the MX records.  If an A record is converted to a CNAME, one must remove all the A records in one call, and add the CNAME record with another call.  This is deceptively difficult to get right; if you have the choice between incremental-label-type and incremental-label, pick incremental-label. (DESEC, ROUTE53)
-* **registrar only:** These providers are registrars but do not provide DNS service. (EASYNAME, INTERNETBS, OPENSRS)
+Each DNS provider's API falls into one of 4 category. Some update one DNS record at a time.
+Others, the only change they permit is to upload the entire zone even if only one record changed!
+Others are somewhere in between: all records at a label must be updated at once, or all records
+in a RecordSet (the label + rType).
 
-All DNS providers use the "diff" module to detect differences. It takes
-two zones and returns records that are unchanged, created, deleted,
-and modified.
-The zone providers use the
-information to print a human-readable list of what is being changed,
-but upload the entire new zone.
-The incremental providers use the differences to
-update individual records or recordsets.
+In summary, provider APIs basically fall into four general categories:
 
+* Updates are done one record at a time (Record)
+* Updates are done one label at a time (Label)
+* Updates are done one label+type at a time (RecordSet)
+* Updates require the entire zone to be uploaded (Zone).
+
+To determine your provider's category, review your API documentation.
+
+To determine an existing provider's category, see which `diff2.By*()` function is used.
+
+DNSControl provides 4 helper functions that do all the hard work for
+you.  As input, they take the existing zone (what was downloaded via
+the API) and the desired zone (what is in `dnsconfig.js`).  They
+return a list of instructions. Implement handlers for the instructions
+and DNSControl is able to perform `dnscontrol push`.
+
+The functions are:
+
+* diff2.ByRecord() -- Updates are done one DNS record at a time. New records are added. Changes and deletes refer to an ID assigned to the record by the provider.
+* diff2.ByLabel() -- Updates are done for an entire label. Adds and changes are done by sending one or more records that will appear at that label (i.e. www.example.com). Deletes delete all records at that label.
+* diff2.ByRecordSet() -- Similar to ByLabel() but updates are done on the label+type level. If www.example.com has 2 A records and 2 MX records, updates must replace all the A records, or all the MX records, or add records of a different type.
+* diff2.ByZone() -- Updates are done by uploading the entire zone every time.
+
+The file `pkg/diff2/diff2.go` has instructions about how to use the diff2 system.
 
 ## Step 3: Create the driver skeleton
 
@@ -134,11 +117,12 @@ The main driver should be called `providers/name/nameProvider.go`.
 The API abstraction is usually in a separate file (often called
 `api.go`).
 
+Directory names should be consitent.  It should be all lowercase and match the ALLCAPS provider name. Avoid `_`s.
 
 ## Step 4: Activate the driver
 
 Edit
-[providers/\_all/all.go](https://github.com/StackExchange/dnscontrol/blob/master/providers/_all/all.go).
+[providers/\_all/all.go](https://github.com/StackExchange/dnscontrol/blob/main/providers/_all/all.go).
 Add the provider list so DNSControl knows it exists.
 
 ## Step 5: Implement
@@ -170,38 +154,42 @@ Run the unit tests with this command:
 
     go test ./...
 
-
 ## Step 7: Integration Test
 
 This is the most important kind of testing when adding a new provider.
-Integration tests use a test account and a real domain.
+Integration tests use a test account and a test domain.
 
-* Edit [integrationTest/providers.json](https://github.com/StackExchange/dnscontrol/blob/master/integrationTest/providers.json): Add the `creds.json` info required for this provider.
+{% hint style="danger" %}
+All records will be deleted from the test domain!  Use a OTE domain or a real domain that isn't otherwise in use and can be destroyed.
+{% endhint %}
 
-For example, this will run the tests using BIND:
+* Edit [integrationTest/providers.json](https://github.com/StackExchange/dnscontrol/blob/main/integrationTest/providers.json):
+  * Add the `creds.json` info required for this provider in the form of environment variables.
+
+Now you can run the integration tests.
+
+For example, test BIND:
 
 ```shell
-cd integrationTest/
+cd integrationTest              # NOTE: Not needed if already there
+export BIND_DOMAIN='example.com'
 go test -v -verbose -provider BIND
 ```
 
-(BIND is a good place to  start since it doesn't require any API keys.)
+(BIND is a good place to start since it doesn't require API keys.)
 
 This will run the tests on Amazon AWS Route53:
 
 ```shell
-export R53_DOMAIN=dnscontroltest-r53.com  # Use a test domain.
+export R53_DOMAIN='dnscontroltest-r53.com'    # Use a test domain.
 export R53_KEY_ID='CHANGE_TO_THE_ID'
 export R53_KEY='CHANGE_TO_THE_KEY'
+cd integrationTest              # NOTE: Not needed if already there
 go test -v -verbose -provider ROUTE53
 ```
 
 Some useful `go test` flags:
 
-* Slow tests? Add `-timeout n` to increase the timeout for tests
-  * `go test` kills the tests after 10 minutes by default.  Some providers need more time.
-  * This flag must be *before* the `-verbose` flag.  Usually it is the first flag after `go test`.
-  * Example:  `go test -timeout 20m -v -verbose -provider CLOUDFLAREAPI`
 * Run only certain tests using the `-start` and `-end` flags.
   * Rather than running all the tests, run just the tests you want.
   * These flags must be *after* the `-provider FOO` flag.
@@ -209,34 +197,42 @@ Some useful `go test` flags:
   * Example: `go test -v -verbose -provider ROUTE53 -start 5 -end 5` runs only test 5.
   * Example: `go test -v -verbose -provider ROUTE53 -start 20` skip the first 19 tests.
   * Example: `go test -v -verbose -provider ROUTE53 -end 20` only run the first 20 tests.
+* Slow tests? Add `-timeout n` to increase the timeout for tests
+  * `go test` kills the tests after 10 minutes by default.  Some providers need more time.
+  * This flag must be *before* the `-verbose` flag.  Usually it is the first flag after `go test`.
+  * Example:  `go test -timeout 20m -v -verbose -provider CLOUDFLAREAPI`
 * If a test will always fail because the provider doesn't support the feature, you can opt out of the test.  Look at `func makeTests()` in [integrationTest/integration_test.go](https://github.com/StackExchange/dnscontrol/blob/2f65533e1b92c2967229a92a304fff7c14f7f4b6/integrationTest/integration_test.go#L675) for more details.
 
-
 ## Step 8: Manual tests
+
+This is optional.
 
 There is a potential bug in how TXT records are handled. Sadly we haven't found
 an automated way to test for this bug.  The manual steps are here in
 [documentation/testing-txt-records.md](testing-txt-records.md)
 
+## Step 9: Update docs, CICD and other files
 
-## Step 9: Update docs
+* Edit `README.md`:
+  * Add the provider to the bullet list.
+* Edit `.github/workflows/pr_test.yml`
+  * Add the name of the provider to the PROVIDERS list.
+* Edit `documentation/providers.md`:
+  * Remove the provider from the `Requested providers` list (near the end of the doc) (if needed).
+  * Add the new provider to the [Providers with "contributor support"](providers.md#providers-with-contributor-support) section.
+* Edit `documentation/SUMMARY.md`:
+  * Add the provider to the "Providers" list.
+* Create `documentation/providers/PROVIDERNAME.md`:
+  * Use one of the other files in that directory as a base.
+* Edit `OWNERS`:
+  * Add the directory name and your GitHub username.
 
-* Edit [README.md](https://github.com/StackExchange/dnscontrol): Add the provider to the bullet list.
-* Edit [documentation/providers.md](https://github.com/StackExchange/dnscontrol/blob/master/documentation/providers.md): Add the provider to the provider list.
-* Edit [documentation/SUMMARY.md](https://github.com/StackExchange/dnscontrol/blob/master/documentation/SUMMARY.md): Add the provider to the provider list.
-* Create `documentation/providers/PROVIDERNAME.md`: Use one of the other files in that directory as a base.
-* Edit [OWNERS](https://github.com/StackExchange/dnscontrol/blob/master/OWNERS): Add the directory name and your GitHub username.
+{% hint style="success" %}
+**Need feedback?** Submit a draft PR!  It's a great way to get early feedback, ask about fixing
+a particular integration test, or request feedback.
+{% endhint %}
 
-## Step 10: Submit a PR
-
-At this point you can submit a PR.
-
-Actually you can submit the PR even earlier if you just want feedback,
-input, or have questions.  This is just a good stopping place to
-submit a PR if you haven't already.
-
-
-## Step 11: Capabilities
+## Step 9: Capabilities
 
 Some DNS providers have features that others do not.  For example some
 support the SRV record.  A provider announces what it can do using
@@ -269,10 +265,9 @@ you want to implement.
 FYI: If a provider's capabilities changes, run `go generate` to update
 the documentation.
 
+## Step 10: Automated code tests
 
-## Step 12: Clean up
-
-Run "go vet" and ["staticcheck"](https://staticcheck.io/) and clean up any errors found.
+Run `go vet` and [`staticcheck`](https://staticcheck.io/) and clean up any errors found.
 
 ```shell
 go vet ./...
@@ -294,30 +289,46 @@ go install golang.org/x/lint/golint
 golint ./...
 ```
 
-
-## Step 13: Dependencies
+## Step 11: Dependencies
 
 See [documentation/release-engineering.md](release-engineering.md)
 for tips about managing modules and checking for outdated
 dependencies.
 
-
-## Step 14: Modify the release regexp
+## Step 12: Modify the release regexp
 
 In the repo root, open `.goreleaser.yml` and add the provider to `Provider-specific changes` regexp.
 
+## Step 13: Check your work
 
-## Step 15: Check your work
+These are the things we'll be checking when you submit the PR.  Please try to complete all or as many of these as possible.
 
-Here are some last-minute things to check before you submit your PR.
+1. Run `go generate ./...` to make sure all generated files are fresh.
+2. Make sure the following files were created and/or updated:
+  * `OWNERS`
+  * `README.md`
+  * `.github/workflows/pr_test.yml` (The PROVIDERS list)
+  * `.goreleaser.yml` (Search for `Provider-specific changes`)
+  * `documentation/SUMMARY.md`
+  * `documentation/providers.md` (the autogenerated table + the second one; make sure it is removed from the `requested` list)
+  * `documentation/providers/`PROVIDERNAME`.md`
+  * `integrationTest/providers.json`
+    * `providers/_all/all.go`
+3. Review the code for style issues, remove debug statements, make sure all exported functions have a comment, and generally tighten up the code.
+4. Verify you're using the most recent version of anything you import.  (See [Step 13](#step-11-dependencies))
+5. Re-run the [integration test](#step-7-integration-test) one last time.
+  * Post the results as a comment to your PR.
+6. Re-read the [maintainer's responsibilities](providers.md#providers-with-contributor-support) bullet list.  By submitting a provider you agree to maintain it, respond to bugs, periodically re-run the integration test to verify nothing has broken, and if we don't hear from you for 2 months we may disable the provider.
 
-1. Run `go generate` to make sure all generated files are fresh.
-2. Make sure all appropriate documentation is current. (See [Step 8](#step-8-manual-tests))
-3. Check that dependencies are current (See [Step 13](#step-13-dependencies))
-4. Re-run the integration test one last time (See [Step 7](#step-7-integration-test))
-5. Re-read the [maintainer's responsibilities](providers.md) bullet list.  By submitting a provider you agree to maintain it, respond to bugs, perioidically re-run the integration test to verify nothing has broken, and if we don't hear from you for 2 months we may disable the provider.
+## Step 14: Submit a PR
 
-## Step 16: After the PR is merged
+At this point you can submit a PR.
 
-1. Remove the "provider-request" label from the PR.
-2. Verify that [documentation/providers.md](providers.md) no longer shows the provider as "requested"
+Actually you can submit the PR even earlier if you just want feedback,
+input, or have questions.  This is just a good stopping place to
+submit a PR if you haven't already.
+
+## Step 15: After the PR is merged
+
+1. Close any related GitHub issues.
+3. Would you like your provider to be tested automatically as part of every PR?  Sure you would!  Follow the instructions in [Bring-Your-Own-Secrets for automated testing](byo-secrets.md)

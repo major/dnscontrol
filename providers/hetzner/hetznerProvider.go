@@ -7,8 +7,6 @@ import (
 
 	"github.com/StackExchange/dnscontrol/v4/models"
 	"github.com/StackExchange/dnscontrol/v4/pkg/diff"
-	"github.com/StackExchange/dnscontrol/v4/pkg/diff2"
-	"github.com/StackExchange/dnscontrol/v4/pkg/txtutil"
 	"github.com/StackExchange/dnscontrol/v4/providers"
 )
 
@@ -73,26 +71,18 @@ func (api *hetznerProvider) EnsureZoneExists(domain string) error {
 func (api *hetznerProvider) GetZoneRecordsCorrections(dc *models.DomainConfig, existingRecords models.Records) ([]*models.Correction, error) {
 	domain := dc.Name
 
-	txtutil.SplitSingleLongTxt(dc.Records) // Autosplit long TXT records
-
-	var corrections []*models.Correction
-	var differ diff.Differ
-	if !diff2.EnableDiff2 {
-		differ = diff.New(dc)
-	} else {
-		differ = diff.NewCompat(dc)
-	}
-	_, create, del, modify, err := differ.IncrementalDiff(existingRecords)
+	toReport, create, del, modify, err := diff.NewCompat(dc).IncrementalDiff(existingRecords)
 	if err != nil {
 		return nil, err
 	}
+	// Start corrections with the reports
+	corrections := diff.GenerateMessageCorrections(toReport)
 
 	z, err := api.getZone(domain)
 	if err != nil {
 		return nil, err
 	}
 
-	corrections = make([]*models.Correction, 0, len(del)+1+1)
 	for _, m := range del {
 		r := m.Existing.Original.(*record)
 		corr := &models.Correction{

@@ -11,7 +11,7 @@ Please change the version number as appropriate.  Substitute (for example)
 
 ```shell
 export VERSION=v4.2.0
-git checkout master
+git checkout main
 git pull
 go fmt ./...
 go generate ./...
@@ -19,7 +19,7 @@ go mod tidy
 git commit -a -m "Update generated files for $VERSION"
 ```
 
-## Step 2. Tag the commit in master that you want to release
+## Step 2. Tag the commit in main that you want to release
 
 ```shell
 export VERSION=v4.2.0
@@ -130,7 +130,7 @@ find * -name \*.bak -delete
 GHA is configured to run an integration test for any provider listed in the "provider" list. However the test is skipped if the `*_DOMAIN` variable is not set. For example, the Google Cloud provider integration test is only run if `GCLOUD_DOMAIN` is set.
 
 * Q: Where is the list of providers to run integration tests on?
-* A: In `.github/workflows/build.yml`: (1) the "PROVIDERS" list, (2) the `integrtests-diff1` section, (3) the `integrtests-diff2` section.
+* A: In `.github/workflows/pr_test.yml`: (1) the "PROVIDERS" list, (2) the `integrtests-diff2` section.
 
 * Q: Where are non-secret environment variables stored?
 * A: GHA calls them "Variables". Update them here: https://github.com/StackExchange/dnscontrol/settings/variables/actions
@@ -140,10 +140,10 @@ GHA is configured to run an integration test for any provider listed in the "pro
 
 ### How do I add a single new integration test?
 
-1. Edit `.github/workflows/build.yml`
+1. Edit `.github/workflows/pr_test.yml`
 2. Add the `FOO_DOMAIN` variable name of the provider to the "PROVIDERS" list.
 3. Set the `FOO_DOMAIN` variables in GHA via https://github.com/StackExchange/dnscontrol/settings/variables/actions
-4. All other variables should be stored as secrets (for consistency).  Add them to both the `integrtests-diff1` section and the `integrtests-diff2` section.
+4. All other variables should be stored as secrets (for consistency).  Add them to the `integration-tests` section.
 Set them in GHA via https://github.com/StackExchange/dnscontrol/settings/secrets/actions
 
 ### How do I add a "bring your own keys" integration test?
@@ -152,7 +152,7 @@ Overview: You will fork the repo and add any secrets to your fork.  For security
 
 1. [Fork StackExchange/dnscontrol](https://github.com/StackExchange/dnscontrol/fork) in GitHub.
 
-    If you already have a fork, be sure to use the "sync fork" button on the main page to sync with master.
+    If you already have a fork, be sure to use the "sync fork" button on the main page to sync with the upstream.
 
 2. In your fork, set the `${DOMAIN}_DOMAIN` variable in GHA via Settings :: Secrets and variables :: Actions :: Variables.
 

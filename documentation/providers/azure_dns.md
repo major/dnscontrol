@@ -45,6 +45,8 @@ export AZURE_CLIENT_SECRET=BBBBBBBBB
 ```
 {% endcode %}
 
+NOTE: The ResourceGroup is case sensitive.
+
 ## Metadata
 This provider does not recognize any special metadata fields unique to Azure DNS.
 
@@ -68,4 +70,6 @@ DNSControl depends on a standard [Client credentials Authentication](https://doc
 ## New domains
 If a domain does not exist in your Azure account, DNSControl will *not* automatically add it with the `push` command. You can do that either manually via the control panel, or via the command `dnscontrol create-domains` command.
 
+## Caveats
 
+The ResourceGroup is case sensitive.

@@ -12,7 +12,6 @@ import (
 	"github.com/StackExchange/dnscontrol/v4/models"
 	"github.com/StackExchange/dnscontrol/v4/pkg/bindserial"
 	"github.com/StackExchange/dnscontrol/v4/pkg/credsfile"
-	"github.com/StackExchange/dnscontrol/v4/pkg/diff2"
 	"github.com/StackExchange/dnscontrol/v4/pkg/nameservers"
 	"github.com/StackExchange/dnscontrol/v4/pkg/normalize"
 	"github.com/StackExchange/dnscontrol/v4/pkg/notifications"
@@ -46,6 +45,7 @@ type PreviewArgs struct {
 	Full        bool
 }
 
+// ReportItem is a record of corrections for a particular domain/provider/registrar.
 type ReportItem struct {
 	Domain      string `json:"domain"`
 	Corrections int    `json:"corrections"`
@@ -76,6 +76,15 @@ func (args *PreviewArgs) flags() []cli.Flag {
 		Name:        "full",
 		Destination: &args.Full,
 		Usage:       `Add headings, providers names, notifications of no changes, etc`,
+	})
+	flags = append(flags, &cli.IntFlag{
+		Name:   "reportmax",
+		Hidden: true,
+		Usage:  `Limit the IGNORE/NO_PURGE report to this many lines (Expermental. Will change in the future.)`,
+		Action: func(ctx *cli.Context, max int) error {
+			printer.MaxReport = max
+			return nil
+		},
 	})
 	flags = append(flags, &cli.Int64Flag{
 		Name:        "bindserial",
@@ -129,6 +138,8 @@ func Push(args PushArgs) error {
 	return run(args.PreviewArgs, true, args.Interactive, printer.DefaultPrinter, &args.Report)
 }
 
+var obsoleteDiff2FlagUsed = false
+
 // run is the main routine common to preview/push
 func run(args PreviewArgs, push bool, interactive bool, out printer.CLI, report *string) error {
 	// TODO: make truly CLI independent. Perhaps return results on a channel as they occur
@@ -136,10 +147,8 @@ func run(args PreviewArgs, push bool, interactive bool, out printer.CLI, report 
 	// This is a hack until we have the new printer replacement.
 	printer.SkinnyReport = !args.Full
 
-	if diff2.EnableDiff2 {
-		printer.Println("INFO: Diff2 algorithm in use. Welcome to the future!")
-	} else {
-		printer.Println("WARNING: Diff1 algorithm in use. Please upgrade to diff2 (`dnscontrol --diff2=true preview`) as diff1 will go away after 2023-07-05. See https://github.com/StackExchange/dnscontrol/issues/2262")
+	if obsoleteDiff2FlagUsed {
+		printer.Println("WARNING: Please remove obsolete --diff2 flag. This will be an error in v5 or later. See https://github.com/StackExchange/dnscontrol/issues/2262")
 	}
 
 	cfg, err := GetDNSConfig(args.GetDNSConfigArgs)
@@ -211,6 +220,7 @@ func run(args PreviewArgs, push bool, interactive bool, out printer.CLI, report 
 						// this is the actual push, ensure domain exists at DSP
 						if err := creator.EnsureZoneExists(domain.Name); err != nil {
 							out.Warnf("Error creating domain: %s\n", err)
+							anyErrors = true
 							continue // continue with next provider, as we couldn't create this one
 						}
 					}
@@ -237,15 +247,13 @@ func run(args PreviewArgs, push bool, interactive bool, out printer.CLI, report 
 				}
 
 				reports, corrections, err := zonerecs.CorrectZoneRecords(provider.Driver, domain)
-				printReports(domain.Name, provider.Name, reports, out, push, notifier)
 				out.EndProvider(provider.Name, len(corrections), err)
 				if err != nil {
 					anyErrors = true
 					return
 				}
 				totalCorrections += len(corrections)
-				// When diff1 goes away, the call to printReports() should be moved to HERE.
-				//printReports(domain.Name, provider.Name, reports, out, push, notifier)
+				printReports(domain.Name, provider.Name, reports, out, push, notifier)
 				reportItems = append(reportItems, ReportItem{
 					Domain:      domain.Name,
 					Corrections: len(corrections),
